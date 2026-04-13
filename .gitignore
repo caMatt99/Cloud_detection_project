@@ -1,6 +1,42 @@
+# Pesi e checkpoints del modello
 *.pth
 *.pt
+*.ckpt
+
+# Dataset e dati grezzi
 dataset/
+data/
+*.csv
+*.zip
+*.tar
+*.tar.gz
+
+# Python
 __pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Jupyter
 .ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Ambiente virtuale
 .env
+.venv
+venv/
+env/
+
+# Editor e OS
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db
+
+# Log e output temporanei
+*.log
+runs/
+wandb/
+lightning_logs/
