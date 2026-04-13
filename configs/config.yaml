@@ -1,0 +1,20 @@
+dataset:
+  path: "/content/drive/MyDrive/cloud_detection/dataset"
+  image_size: 224
+  batch_size: 12
+
+training:
+  epochs: 60
+  optimizer: "sgd"
+  learning_rate: 0.0001
+  momentum: 0.8
+  weight_decay: 0.00001
+
+model:
+  name: "convnext_base"
+  pretrained: true
+  num_classes: 2
+
+paths:
+  checkpoints: "/content/drive/MyDrive/cloud_detection/checkpoints"
+  results: "/content/project/results"
