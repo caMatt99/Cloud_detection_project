@@ -40,3 +40,4 @@ Thumbs.db
 runs/
 wandb/
 lightning_logs/
+notebooks/00-setup.ipynb
