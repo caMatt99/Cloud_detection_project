@@ -41,3 +41,4 @@ runs/
 wandb/
 lightning_logs/
 notebooks/00-setup.ipynb
+cloud_venv/
