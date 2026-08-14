@@ -34,7 +34,7 @@ env/
 .vscode/
 .idea/
 Thumbs.db
-
+.claude
 # Log e output temporanei
 *.log
 runs/
