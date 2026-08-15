@@ -1,5 +1,7 @@
 dataset:
-  path: "/content/drive/MyDrive/cloud_detection/dataset"
+  path:
+    colab: "/content/drive/MyDrive/cloud_detection/dataset"
+    local: "./data"
   image_size: 224
   batch_size: 12
 
@@ -16,5 +18,9 @@ model:
   num_classes: 2
 
 paths:
-  checkpoints: "/content/drive/MyDrive/cloud_detection/checkpoints"
-  results: "/content/project/results"
+  checkpoints:
+    colab: "/content/drive/MyDrive/cloud_detection/checkpoints"
+    local: "./checkpoints"
+  results:
+    colab: "/content/project/results"
+    local: "./results"
