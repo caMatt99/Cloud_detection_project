@@ -1,10 +1,10 @@
 dataset:
   path:
     colab: "/content/drive/MyDrive/cloud_detection/dataset"
-    local: "./data"
+    local: "/Users/matteo/Desktop/Cloud_detection_project/data/dataset"  # ← Path assoluto
   image_size: 224
   batch_size: 12
-
+  
 training:
   epochs: 60
   optimizer: "sgd"
