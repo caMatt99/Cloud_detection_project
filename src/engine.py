@@ -12,6 +12,42 @@ import wandb
 from models import get_unfrozen_params
 
 
+def compute_class_weights(train_dataset) -> torch.Tensor:
+    """
+    Computes inverse-frequency class weights from a train ImageFolder dataset,
+    to pass to nn.CrossEntropyLoss(weight=...).
+
+    The ceilometer train set is imbalanced ~2:1 true:false (515 vs 255 images —
+    see notebooks/01_eda.ipynb, sections 2 and 7), which the paper doesn't mention
+    or correct for. Weighting the minority class ("false") more heavily keeps the
+    loss from being dominated by the majority class.
+
+    Args:
+        train_dataset: torchvision.datasets.ImageFolder (e.g. train_loader.dataset),
+                       whose `.targets` is a list of int labels (false=0, true=1,
+                       per ImageFolder's alphabetical class ordering).
+
+    Returns:
+        torch.Tensor: [weight_false, weight_true], in ImageFolder label order,
+        ready to pass as nn.CrossEntropyLoss(weight=...).
+    """
+
+    targets = train_dataset.targets
+    true_count = sum(1 for t in targets if t == 1)
+    false_count = sum(1 for t in targets if t == 0)
+    total = true_count + false_count
+
+    weight_true = false_count / total
+    weight_false = true_count / total
+
+    print(
+        f"[compute_class_weights] true: {true_count} (weight={weight_true:.3f})  "
+        f"false: {false_count} (weight={weight_false:.3f})"
+    )
+
+    return torch.tensor([weight_false, weight_true], dtype=torch.float32)
+
+
 def build_phase_optimizer(
     model,
     epoch,

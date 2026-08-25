@@ -58,6 +58,50 @@ def get_predictions(
     return all_preds, all_labels
 
 
+def get_probabilities(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Runs inference on a DataLoader and returns the predicted probability of the
+    "true" (cloudy) class, alongside ground truth — used for decision-threshold
+    tuning (precision_recall_curve needs continuous scores, not hard 0/1 preds
+    like get_predictions() returns).
+
+    The model outputs 2-class logits (nn.CrossEntropyLoss, num_classes=2), so the
+    "probability of true" is softmax(outputs)[:, 1], not a sigmoid (there's no
+    single-logit head in this project).
+
+    Args:
+        model  (nn.Module)   : trained model to evaluate.
+        loader (DataLoader)  : data loader (val or test).
+        device (torch.device): 'cuda' or 'cpu'.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]:
+            - all_probs  : predicted probability of class "true" (label 1)
+            - all_labels : ground truth labels
+    """
+
+    model.eval()
+
+    all_probs: List[float] = []
+    all_labels: List[int] = []
+
+    with torch.no_grad():
+        for images, labels in loader:
+            images = images.to(device)
+
+            outputs: torch.Tensor = model(images)
+            probs: torch.Tensor = torch.softmax(outputs, dim=1)[:, 1]
+
+            all_probs.extend(probs.cpu().numpy())
+            all_labels.extend(labels.numpy())
+
+    return np.array(all_probs), np.array(all_labels)
+
+
 def compute_metrics(
     all_preds: List[int],
     all_labels: List[int],

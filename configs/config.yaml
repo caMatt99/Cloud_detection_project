@@ -13,12 +13,20 @@ training:
   weight_decay: 0.00001
   optimizer: "sgd"
   momentum: 0.8
+  use_class_weights: true  # train set sbilanciato ~2:1 true:false (vedi notebooks/01_eda.ipynb, sez. 2/7)
 
 model:
   name: "convnext_base"
   pretrained: true
   num_classes: 2
-  dropout_rate: 0.3
+  dropout_rate: 0.2  # ridotto da 0.3: il train set (770 immagini) e' piccolo, dropout troppo alto rallenta la convergenza
+
+augmentation:
+  randaugment_num_ops: 2
+  randaugment_magnitude: 7      # ridotto da 9 — meno aggressivo per un dataset piccolo
+  cutout_num_holes: 1
+  cutout_max_h_size: 28         # ridotto da 32
+  cutout_max_w_size: 28         # ridotto da 32
 
 paths:
   checkpoints:
