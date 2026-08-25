@@ -1,7 +1,7 @@
 dataset:
   path:
     colab: "/content/drive/MyDrive/cloud_detection/dataset"
-    local: "/Users/matteo/Desktop/Cloud_detection_project/data/dataset"  # ← Path assoluto
+    local: "/Users/matteo/Desktop/Cloud_detection_project/data/dataset"  
   image_size: 224
   batch_size: 12
   
@@ -10,7 +10,7 @@ training:
   optimizer: "sgd"
   learning_rate: 0.0001
   momentum: 0.8
-  weight_decay: 0.00001
+  weight_decay: 0.0005 
 
 model:
   name: "convnext_base"
