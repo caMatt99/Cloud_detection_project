@@ -4,9 +4,50 @@ Reads images from Google Drive and returns DataLoaders ready for training.
 """
 
 import os
+import random
 from typing import Tuple, List
+import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
+
+
+class Cutout:
+    """
+    Randomly masks out square patches of a tensor image.
+
+    Applied after normalization, as in the original Cutout paper
+    (DeVries & Taylor, 2017), so the mask value is 0 (the mean
+    of the normalized distribution) rather than raw pixel black.
+
+    Args:
+        num_holes (int): number of patches to cut out.
+        max_h_size (int): maximum height of each patch, in pixels.
+        max_w_size (int): maximum width of each patch, in pixels.
+    """
+
+    def __init__(self, num_holes: int = 1, max_h_size: int = 32, max_w_size: int = 32) -> None:
+        self.num_holes = num_holes
+        self.max_h_size = max_h_size
+        self.max_w_size = max_w_size
+
+    def __call__(self, img: torch.Tensor) -> torch.Tensor:
+        h, w = img.shape[-2], img.shape[-1]
+
+        for _ in range(self.num_holes):
+            hole_h = random.randint(1, self.max_h_size)
+            hole_w = random.randint(1, self.max_w_size)
+
+            cy = random.randint(0, h - 1)
+            cx = random.randint(0, w - 1)
+
+            y1 = max(cy - hole_h // 2, 0)
+            y2 = min(cy + hole_h // 2, h)
+            x1 = max(cx - hole_w // 2, 0)
+            x2 = min(cx + hole_w // 2, w)
+
+            img[..., y1:y2, x1:x2] = 0.0
+
+        return img
 
 
 def get_transforms(
@@ -15,8 +56,8 @@ def get_transforms(
     """
     Returns image transformations for training and evaluation.
 
-    Training uses random horizontal flip as data augmentation,
-    exactly as described in the paper.
+    Training uses random horizontal flip (as described in the paper)
+    plus RandAugment and Cutout as additional augmentation.
     Validation and test use only resize and normalization.
 
     Args:
@@ -41,9 +82,11 @@ def get_transforms(
     # the same approach used in the paper.
     train_transform: transforms.Compose = transforms.Compose([
         transforms.Resize((image_size, image_size)),
-        transforms.RandomHorizontalFlip(p=0.5),  # augmentation as in paper
-        transforms.ToTensor(),                    # converts pixels 0-255 to tensor 0-1
-        normalize
+        transforms.RandomHorizontalFlip(p=0.5),        # augmentation as in paper
+        transforms.RandAugment(num_ops=2, magnitude=9),  # operates on PIL image
+        transforms.ToTensor(),                          # converts pixels 0-255 to tensor 0-1
+        normalize,
+        Cutout(num_holes=1, max_h_size=32, max_w_size=32)  # operates on normalized tensor
     ])
 
     eval_transform: transforms.Compose = transforms.Compose([
