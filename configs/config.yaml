@@ -6,11 +6,12 @@ dataset:
   batch_size: 12
   
 training:
-  epochs: 60
-  optimizer: "sgd"
-  learning_rate: 0.0001
-  momentum: 0.8
-  weight_decay: 0.0005 
+learning_rate: 0.0001  
+epochs: 80            
+patience: 25          
+delta: 0.0002          
+weight_decay: 0.00001   
+
 
 model:
   name: "convnext_base"
