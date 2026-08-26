@@ -4,7 +4,7 @@ dataset:
     colab: "/content/drive/MyDrive/cloud_detection/dataset"
     local: "/Users/matteo/Desktop/Cloud_detection_project/data/dataset"  
   image_size: 224
-  batch_size: 16
+  batch_size: 12
   
 training:
   learning_rate: 0.0001      # ← ESATTO
