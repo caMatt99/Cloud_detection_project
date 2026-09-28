@@ -106,14 +106,21 @@ def get_transforms(
     image_size: int = 224,
     dataset_path: Optional[str] = None,
     compute_local_stats: bool = True,
-    aug_cfg: Optional[dict] = None
+    aug_cfg: Optional[dict] = None,
+    augmentation: str = "default"
 ) -> Tuple[transforms.Compose, transforms.Compose]:
     """
     Returns image transformations for training and evaluation.
 
     Training uses random horizontal flip (as described in the paper)
-    plus RandAugment and Cutout as additional augmentation.
+    plus, by default, RandAugment and Cutout as additional augmentation.
     Validation and test use only resize and normalization.
+
+    augmentation="default" (the default) reproduces the original behavior
+    exactly — horizontal flip + RandAugment + Cutout, per aug_cfg. Passing
+    augmentation="paper" restricts training augmentation to horizontal flip
+    only, as the paper baseline does (02_baseline.ipynb); aug_cfg is ignored
+    in that case.
 
     Normalization: by default (compute_local_stats=True) mean/std are computed
     from dataset_path's train split via compute_dataset_stats() instead of the
@@ -142,6 +149,10 @@ def get_transforms(
                                              cutout_num_holes, cutout_max_h_size,
                                              cutout_max_w_size. Missing keys fall
                                              back to the original hardcoded values.
+                                             Ignored when augmentation="paper".
+        augmentation         (str)          : "default" (original behavior: flip +
+                                             RandAugment + Cutout) or "paper" (flip
+                                             only, matching the paper baseline).
 
     Returns:
         Tuple[transforms.Compose, transforms.Compose]:
@@ -180,21 +191,30 @@ def get_transforms(
     # Original images are 1000x150 pixels.
     # Resizing to 224x224 distorts the aspect ratio but follows
     # the same approach used in the paper.
-    train_transform: transforms.Compose = transforms.Compose([
+    train_ops = [
         transforms.Resize((image_size, image_size)),
         transforms.RandomHorizontalFlip(p=0.5),        # augmentation as in paper
-        transforms.RandAugment(
-            num_ops=aug["randaugment_num_ops"],
-            magnitude=aug["randaugment_magnitude"],
-        ),                                              # operates on PIL image
-        transforms.ToTensor(),                          # converts pixels 0-255 to tensor 0-1
-        normalize,
-        Cutout(
-            num_holes=aug["cutout_num_holes"],
-            max_h_size=aug["cutout_max_h_size"],
-            max_w_size=aug["cutout_max_w_size"],
-        )                                                # operates on normalized tensor
-    ])
+    ]
+    if augmentation == "paper":
+        train_ops += [
+            transforms.ToTensor(),                      # converts pixels 0-255 to tensor 0-1
+            normalize,
+        ]
+    else:
+        train_ops += [
+            transforms.RandAugment(
+                num_ops=aug["randaugment_num_ops"],
+                magnitude=aug["randaugment_magnitude"],
+            ),                                          # operates on PIL image
+            transforms.ToTensor(),                      # converts pixels 0-255 to tensor 0-1
+            normalize,
+            Cutout(
+                num_holes=aug["cutout_num_holes"],
+                max_h_size=aug["cutout_max_h_size"],
+                max_w_size=aug["cutout_max_w_size"],
+            )                                            # operates on normalized tensor
+        ]
+    train_transform: transforms.Compose = transforms.Compose(train_ops)
 
     eval_transform: transforms.Compose = transforms.Compose([
         transforms.Resize((image_size, image_size)),
@@ -211,7 +231,8 @@ def get_dataloaders(
     image_size: int = 224,
     num_workers: int = 2,
     compute_local_stats: bool = True,
-    aug_cfg: Optional[dict] = None
+    aug_cfg: Optional[dict] = None,
+    augmentation: str = "default"
 ) -> Tuple[DataLoader, DataLoader, DataLoader, List[str]]:
     """
     Reads train/, val/, test/ from dataset_path and returns DataLoaders.
@@ -234,6 +255,9 @@ def get_dataloaders(
         aug_cfg              (dict, optional): passed to get_transforms() —
                              augmentation hyperparameters, typically
                              config["augmentation"] from configs/config.yaml.
+        augmentation         (str)          : passed to get_transforms() —
+                             "default" (original flip+RandAugment+Cutout) or
+                             "paper" (flip only).
 
     Returns:
         Tuple containing:
@@ -248,6 +272,7 @@ def get_dataloaders(
         dataset_path=dataset_path,
         compute_local_stats=compute_local_stats,
         aug_cfg=aug_cfg,
+        augmentation=augmentation,
     )
 
     # ImageFolder expects this structure inside dataset_path:
