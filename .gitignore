@@ -42,3 +42,7 @@ wandb/
 lightning_logs/
 notebooks/00-setup.ipynb
 cloud_venv/
+
+# Risultati di training (salvati localmente in results/, non versionati)
+results/*
+!results/.gitkeep

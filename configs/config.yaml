@@ -1,38 +1,38 @@
-# config.yaml — BASELINE WORKING
+# config.yaml — BEST MODEL (92.76% test accuracy, ConvNeXt-Base)
 dataset:
   path:
     colab: "/content/drive/MyDrive/cloud_detection/dataset"
-    local: "/Users/matteo/Desktop/Cloud_detection_project/data/dataset"  
+    local: "/Users/matteo/Desktop/Cloud_detection_project/data/dataset"
   image_size: 224
   batch_size: 12
-  
+
 training:
-  learning_rate: 0.0001      # ← ESATTO
-  epochs: 60                 # ← ritorna da 80
-  patience: 15               # ← ritorna da 25
-  delta: 0.0005              # ← ritorna da 0.0002
+  learning_rate: 0.0001
+  epochs: 60
+  patience: 15
+  delta: 0.0005
   weight_decay: 0.00001
   optimizer: "sgd"
   momentum: 0.8
-  use_class_weights: false   # ← NO weights
+  use_class_weights: false   # class balancing disabled — baseline is optimal
 
 model:
   name: "convnext_base"
   pretrained: true
   num_classes: 2
-  dropout_rate: 0.3          # ← ritorna da 0.2
+  dropout_rate: 0.3
 
 augmentation:
   randaugment_num_ops: 2
-  randaugment_magnitude: 7      # ridotto da 9 — meno aggressivo per un dataset piccolo
+  randaugment_magnitude: 9
   cutout_num_holes: 1
-  cutout_max_h_size: 28         # ridotto da 32
-  cutout_max_w_size: 28         # ridotto da 32
+  cutout_max_h_size: 32
+  cutout_max_w_size: 32
 
 paths:
   checkpoints:
     colab: "/content/drive/MyDrive/cloud_detection/checkpoints"
     local: "./checkpoints"
   results:
-    colab: "/content/project/results"
+    colab: "/content/drive/MyDrive/cloud_detection/results"
     local: "./results"

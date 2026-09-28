@@ -72,6 +72,35 @@ metrics = compute_metrics(preds, labels, model_name="convnext_base")
 
 ---
 
+## Results
+
+### Best Model Performance
+- **Test Accuracy: 92.76%** (+3.83pp vs benchmark)
+- **Benchmark (paper)**: 89.57% (ResNet50)
+- **Architecture**: ConvNeXt base (pretrained ImageNet)
+
+### Configuration
+- Learning rate: 0.0001 (fixed, no scheduler)
+- Optimizer: SGD (momentum=0.8)
+- Weight decay: 0.00001
+- Batch size: 12
+- Epochs: 60 (early stopping at epoch 29, patience=15)
+- Early stopping: delta=0.0005
+- Data augmentation: RandAugment(num_ops=2, magnitude=9) + Cutout(32×32)
+- Dropout: 0.3
+- Class balancing: disabled (baseline configuration optimal)
+
+### Key Learnings
+- WeightedRandomSampler peggiorava i risultati (-0.64pp)
+- Class loss weighting era inutile
+- Augmentation aggressive (magnitude=9) necessaria
+- Baseline configuration was already optimal
+
+Full run config and metrics are written to `results/results_<model_name>.json`
+by `notebooks/03_new_model.ipynb` after each run (see [Usage §4](#4-evaluate-and-compare-models)).
+
+---
+
 ## Code Reference
 
 ### Data Pipeline (`src/dataset.py`)
