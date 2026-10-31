@@ -1,7 +1,7 @@
 # Cloud Detection – Ceilometer Backscatter Classification
 
 ## Overview
-This project benchmarks CNN and transformer architectures for binary cloud detection (cloudy / clear) from ceilometer lidar backscatter profile images. It reproduces the baseline from Chisari et al., *"Cloud Detection Challenge – Methods and Results"* (IEEE Access, 2025) and *"On the Cloud Detection from Backscattered Images..."* (ICIP, 2024), then evaluates newer architectures (ConvNeXt-Base, Swin Transformer) against it. The data source is the public Zenodo dataset [record 10616434](https://zenodo.org/records/10616434): 1000×150 backscatter images split into `train`/`val`/`test`, each containing `true` (cloudy) and `false` (clear) subfolders. Training runs and evaluation are driven from Jupyter notebooks and a standalone CLI script; results (confusion matrices, training curves, cross-model comparison charts) are written as PNGs to `results/` for reporting.
+This project benchmarks CNN and transformer architectures for binary cloud detection (cloudy / clear) from ceilometer lidar backscatter profile images. It reproduces the baseline from Chisari et al., *"Cloud Detection Challenge – Methods and Results"* (IEEE Access, 2025) and *"On the Cloud Detection from Backscattered Images..."* (ICIP, 2024), then evaluates newer architectures (ConvNeXt-Base, Swin Transformer) against it. The data source is the public Zenodo dataset [record 10616434](https://zenodo.org/records/10616434): 1000×150 backscatter images split into `train`/`val`/`test`, each containing `true` (cloudy) and `false` (clear) subfolders. Every experiment is a YAML config run over several seeds by `src/experiment.py`, from the notebooks or the command line, and tracked on Weights & Biases.
 
 ---
 
@@ -28,112 +28,67 @@ pip install -r requirements.txt
 
 ## Usage
 
-The workflow has two independent entry points: a standalone CLI script (`src/train.py`) and a notebook-driven pipeline (`src/dataset.py` + `src/models.py` + `src/evaluate.py`, configured via `configs/config.yaml`). Both expect the same on-disk dataset layout but build different models internally — see [Design Principles](#design-principles).
-
 ### 1. Prepare the dataset
 
-Download the dataset from [Zenodo](https://zenodo.org/records/10616434) and lay it out as `train/{true,false}`, `val/{true,false}`, `test/{true,false}`. If only `train` and `test` exist, run the split cell in `notebooks/00-setup.ipynb`: it moves a seeded random 30% of each class from `train` into `val` (`random.seed(42)`), reproducing the paper's ~49/21/30 train/val/test proportions (expected counts: 770/328/470 images).
+Download the dataset from [Zenodo](https://zenodo.org/records/10616434) and lay it out as `train/{true,false}`, `val/{true,false}`, `test/{true,false}`. If only `train` and `test` exist, create the validation split once on a fresh copy of the data:
 
 ```python
-# inside notebooks/00-setup.ipynb
-VAL_RATIO = 0.30
+from dataset import make_val_split
+make_val_split("/path/to/dataset", val_ratio=0.30, seed=42)   # expected: 770 / 328 / 470
 ```
 
-### 2. Train via the CLI script
+Every run calls `check_split()`, which fails if the on-disk counts differ from the expected split, and logs a fingerprint of the file lists: runs with different fingerprints used different data and are not comparable.
 
-`src/train.py` is self-contained: it builds its own `torchvision` backbone with a single-logit binary head (`BCEWithLogitsLoss`, sigmoid threshold 0.5), trains with early stopping on validation loss and `ReduceLROnPlateau`, and writes `config.json`, `history.json`, `best_model.pt`, and `test_results.json` to `runs/<model>_<optimizer>_lr<lr>/`. Use this path for a reproducible, resumable-by-checkpoint run outside a notebook.
+### 2. Run an experiment
+
+An experiment is a YAML file in `configs/`. It is run once per seed; each seed is one W&B run, grouped by `experiment.name`.
 
 ```bash
-python src/train.py --data_dir dataset --model resnet50 \
-  --epochs 60 --batch_size 12 --optimizer adam --lr 1e-4
+python src/experiment.py --config configs/resnet50_paper.yaml          # seeds from the config
+python src/experiment.py --config configs/convnext_legacy.yaml --seeds 0 1 2
 ```
 
-### 3. Train via the notebook pipeline
+or from `notebooks/02_baseline.ipynb` / `notebooks/03_new_model.ipynb` (set `CONFIG_PATH`). Per-seed results and a `summary.csv` (mean / std / min / max) are written to `paths.results/<experiment.name>/`, the val-selected weights to `paths.checkpoints/<experiment.name>/seed<k>.pt`.
 
-`notebooks/02_baseline.ipynb` and `notebooks/03_new_model.ipynb` are the intended entry points for the baseline (ResNet50) and new architectures (ConvNeXt-Base, Swin Transformer) respectively, using `src/dataset.get_dataloaders()` and `src/models.get_model()` with hyperparameters read from `configs/config.yaml`. This pipeline assumes execution in Google Colab with the dataset under Google Drive, matching the paths hardcoded in `config.yaml` and `notebooks/00-setup.ipynb`. Both notebooks are currently empty scaffolding, as is `notebooks/01_eda.ipynb` (intended for exploratory analysis of the backscatter images).
+### 3. Evaluation protocol
 
-```yaml
-# configs/config.yaml
-model:
-  name: "convnext_base"
-  pretrained: true
-```
+- the checkpoint is selected on validation (`selection.monitor`: `val_loss` or `val_acc`), never on test;
+- test is reported with the selected weights (`test/*` in W&B) and with the last-epoch weights (`test_last/*`);
+- precision / recall / F1 are binary with positive class `true`, as in the paper (weighted averages are logged too);
+- results are compared as mean ± std over seeds. The test set has 470 images, so one image is 0.21 pp.
 
-### 4. Evaluate and compare models
+---
 
-`src/evaluate.py` runs inference on a trained model, computes weighted accuracy/F1/precision/recall, and saves a confusion matrix, training curves, and a grouped bar chart comparing all benchmarked models to `results/`.
+## Configs
 
-```python
-from src.evaluate import get_predictions, compute_metrics, compare_models
-
-preds, labels = get_predictions(model, test_loader, device)
-metrics = compute_metrics(preds, labels, model_name="convnext_base")
-```
+| Config | Purpose |
+|---|---|
+| `resnet50_paper.yaml` | Paper replica: torchvision ResNet50, SGD (lr 1e-4, momentum 0.8, wd 1e-5), flip only, ImageNet normalization, paper early stopping (\|Δval_loss\| < 0.05 for 3 epochs). |
+| `convnext_legacy.yaml` | The ConvNeXt-Base recipe that produced the earlier single-run 92.77%: gradual unfreezing with the optimizer rebuilt every epoch, train-split normalization, RandAugment + Cutout, dropout 0.3 on every `nn.Dropout`, no early stopping. Kept to re-measure that result over seeds. |
 
 ---
 
 ## Results
 
-### Best Model Performance
-- **Test Accuracy: 92.76%** (+3.83pp vs benchmark)
-- **Benchmark (paper)**: 89.57% (ResNet50)
-- **Architecture**: ConvNeXt base (pretrained ImageNet)
+| Model | Protocol | Test accuracy |
+|---|---|---|
+| ResNet50 (paper, Chisari et al.) | single best run | 89.57% |
+| ConvNeXt-Base, legacy recipe | single unseeded run, last epoch | 92.77% |
 
-### Configuration
-- Learning rate: 0.0001 (fixed, no scheduler)
-- Optimizer: SGD (momentum=0.8)
-- Weight decay: 0.00001
-- Batch size: 12
-- Epochs: 60 (early stopping at epoch 29, patience=15)
-- Early stopping: delta=0.0005
-- Data augmentation: RandAugment(num_ops=2, magnitude=9) + Cutout(32×32)
-- Dropout: 0.3
-- Class balancing: disabled (baseline configuration optimal)
-
-### Key Learnings
-- WeightedRandomSampler peggiorava i risultati (-0.64pp)
-- Class loss weighting era inutile
-- Augmentation aggressive (magnitude=9) necessaria
-- Baseline configuration was already optimal
-
-Full run config and metrics are written to `results/results_<model_name>.json`
-by `notebooks/03_new_model.ipynb` after each run (see [Usage §4](#4-evaluate-and-compare-models)).
+The 92.77% run was neither seeded nor selected on validation, so it is being re-measured with `convnext_legacy.yaml` under the protocol above before being compared with the paper.
 
 ---
 
 ## Code Reference
 
-### Data Pipeline (`src/dataset.py`)
-
-Builds `DataLoader`s from an `ImageFolder`-structured dataset directory.
-
-| Script | Description |
+| Module | Contents |
 |---|---|
-| `dataset.py` | `get_transforms()` returns train/eval `torchvision` transform pipelines: resize to 224×224, ImageNet normalization, and random horizontal flip (p=0.5) applied only to training. `get_dataloaders()` reads `train/`, `val/`, `test/` from `dataset_path` via `ImageFolder` (labels assigned alphabetically: `false`=0, `true`=1), builds shuffled train / non-shuffled val and test loaders, and prints per-split image counts for validation against the paper's expected splits. |
-
-### Model Definitions (`src/models.py`)
-
-Instantiates pretrained `timm` backbones for the notebook pipeline.
-
-| Script | Description |
-|---|---|
-| `models.py` | `get_model()` loads a `timm` backbone (`resnet50`, `convnext_base`, `swin_base_patch4_window7_224`, `vgg16`, `efficientnet_b0`, `inception_v3`, `vit_base_patch16_224`), pretrained on ImageNet, with the head replaced for `num_classes` outputs (default 2); raises `ValueError` on an unrecognized name. `get_device()` selects CUDA over CPU and logs GPU name/memory. `count_parameters()` returns total vs. trainable parameter counts. |
-
-### Training CLI (`src/train.py`)
-
-Standalone argparse script, independent of `dataset.py` and `models.py`.
-
-| Script | Description |
-|---|---|
-| `train.py` | Builds `torchvision` models (`resnet50`, `resnet101`, `vgg16`, `inceptionv3`, `efficientnet_b0`, `vit_b16`) with a single-logit binary head trained via `BCEWithLogitsLoss`, unlike the 2-class softmax heads used elsewhere in `src/`. Supports backbone freezing, gradient clipping, `ReduceLROnPlateau`, early stopping on validation loss, class-weighted loss or `WeightedRandomSampler` for class imbalance, and InceptionV3's auxiliary-logit loss term (weighted 0.4). Persists run config, training history, best checkpoint, and test-set results (including the confusion matrix) under `runs/<model>_<optimizer>_lr<lr>/`. |
-
-### Evaluation & Visualization (`src/evaluate.py`)
-
-Notebook-facing helpers for models produced by `models.py`.
-
-| Script | Description |
-|---|---|
-| `evaluate.py` | `get_predictions()` runs inference and returns `argmax` class predictions — assumes a 2-logit softmax output, not the single-logit sigmoid head from `train.py`. `compute_metrics()` reports weighted accuracy/F1/precision/recall. `plot_confusion_matrix()` and `plot_training_history()` save per-model PNGs to `results/`. `compare_models()` saves a grouped bar chart (accuracy and F1 per model) across all entries in a `{model_name: metrics_dict}` mapping. |
+| `src/utils.py` | `seed_everything()`, `seed_worker()`, `load_config()` (resolves `colab`/`local` paths), `flatten_dict()`. |
+| `src/dataset.py` | Split utilities (`check_split`, `split_fingerprint`, `make_val_split`), transforms (`paper` / `randaugment`, `imagenet` / `local` normalization), seeded `get_dataloaders()`. |
+| `src/models.py` | `get_model()` with pinned timm tags and torchvision `resnet50_tv`; `drop_rate` / `drop_path_rate`; legacy helpers `apply_legacy_dropout()` and `get_unfrozen_params()`. |
+| `src/engine.py` | `train_one_epoch()` / `evaluate()` with optional AMP and gradient clipping, `build_optimizer()`, `BestCheckpoint`, `EarlyStopping` (`none` / `paper` / `standard`). |
+| `src/evaluate.py` | Binary + weighted metrics, confusion matrix, training curves, model comparison chart. |
+| `src/experiment.py` | `run_experiment(cfg, seed)`, `run_seeds(cfg)`, CLI entry point. |
 
 ---
 
@@ -142,28 +97,20 @@ Notebook-facing helpers for models produced by `models.py`.
 ```
 Cloud_detection_project/
 ├── configs/
-│   └── config.yaml
+│   ├── convnext_legacy.yaml
+│   └── resnet50_paper.yaml
 ├── notebooks/
-│   ├── 00-setup.ipynb
 │   ├── 01_eda.ipynb
 │   ├── 02_baseline.ipynb
 │   └── 03_new_model.ipynb
 ├── results/
-│   └── .gitkeep
 ├── src/
 │   ├── dataset.py
+│   ├── engine.py
 │   ├── evaluate.py
+│   ├── experiment.py
 │   ├── models.py
-│   └── train.py
+│   └── utils.py
 ├── requirements.txt
 └── README.md
 ```
-
----
-
-## Design Principles
-
-- **Two independent training pipelines.** `train.py` is a self-contained CLI script with its own `torchvision` model builder and single-logit sigmoid head. The notebook pipeline (`dataset.py` + `models.py` + `evaluate.py` + `config.yaml`) uses `timm` backbones with 2-class softmax heads. Checkpoints and evaluation code are not interchangeable between the two: `evaluate.get_predictions()`'s `argmax` logic will not produce correct labels on a `train.py` checkpoint.
-- **Google Drive as the dataset backend for the notebook pipeline.** `config.yaml`, the `dataset.py` docstring, and `00-setup.ipynb` hardcode paths under `/content/drive/MyDrive/cloud_detection/`, so that pipeline assumes execution inside Google Colab with Drive mounted. `train.py` instead takes `--data_dir` as a CLI argument and has no Colab dependency.
-- **Paper-derived defaults.** Image size (224), batch size (12), ImageNet normalization, and augmentation limited to horizontal flip match the Chisari et al. setup, so newer architectures are benchmarked under the same conditions as the reported ResNet50 baseline (89.57% accuracy).
-- **Fixed seeds for reproducibility.** The train/val split (`00-setup.ipynb`) and training (`train.py`, `torch.manual_seed`) both seed with `42`.

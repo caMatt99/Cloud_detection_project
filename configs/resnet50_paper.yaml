@@ -1,0 +1,51 @@
+# ResNet50 — replica of the paper's best model (Chisari et al., Table 3:
+# SGD config #2 -> 89.57% acc, P 0.90, R 0.96, F1 0.93), under the Phase 0 protocol.
+experiment:
+  name: resnet50-paper
+  seeds: [0, 1, 2]
+  deterministic: true
+  check_split: true
+  wandb_project: cloud-detection
+  tags: [phase0, baseline, paper-repro]
+  save_checkpoint: true
+
+dataset:
+  path:
+    colab: "/content/drive/MyDrive/cloud_detection/dataset"
+    local: "/Users/matteo/Desktop/Cloud_detection_project/data/dataset"
+  image_size: 224
+  batch_size: 12                # not specified by the paper
+  num_workers: 2
+  normalization: imagenet
+  augmentation: paper           # horizontal flip only
+
+model:
+  name: resnet50_tv             # torchvision IMAGENET1K_V1, fc -> 2 logits, no extra dropout
+  pretrained: true
+  num_classes: 2
+
+training:
+  optimizer: sgd
+  learning_rate: 0.0001         # Table 2, SGD #2
+  momentum: 0.8
+  weight_decay: 0.00001
+  label_smoothing: 0.0
+  epochs: 60
+  schedule: full
+  early_stopping:
+    mode: paper                 # stop when |Δval_loss| < delta ...
+    delta: 0.05
+    patience: 3                 # ... for at least three consecutive epochs (Sec. 4.2)
+  amp: false
+  grad_clip: 0.0
+
+selection:
+  monitor: val_loss
+
+paths:
+  checkpoints:
+    colab: "/content/drive/MyDrive/cloud_detection/checkpoints"
+    local: "./checkpoints"
+  results:
+    colab: "/content/drive/MyDrive/cloud_detection/results"
+    local: "./results"

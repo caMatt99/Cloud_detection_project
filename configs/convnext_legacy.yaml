@@ -1,0 +1,62 @@
+# ConvNeXt-Base — LEGACY recipe, i.e. what actually ran in the 92.77% run
+# (commit 89cf8be), re-measured under the Phase 0 protocol (seeds, split check,
+# val-based checkpoint selection, binary metrics). Test is reported both with
+# the val-selected weights ("best") and with the last epoch ("last", as before).
+experiment:
+  name: convnext-legacy
+  seeds: [0, 1, 2]
+  deterministic: true
+  check_split: true
+  wandb_project: cloud-detection
+  tags: [phase0, convnext, legacy]
+  save_checkpoint: true
+
+dataset:
+  path:
+    colab: "/content/drive/MyDrive/cloud_detection/dataset"
+    local: "/Users/matteo/Desktop/Cloud_detection_project/data/dataset"
+  image_size: 224
+  batch_size: 12
+  num_workers: 2
+  normalization: local          # legacy: train-split stats (was the get_dataloaders default)
+  augmentation: randaugment     # flip + RandAugment + Cutout
+
+augmentation:
+  randaugment_num_ops: 2
+  randaugment_magnitude: 9
+  cutout_num_holes: 1
+  cutout_max_h_size: 32
+  cutout_max_w_size: 32
+
+model:
+  name: convnext_base           # timm convnext_base.fb_in22k_ft_in1k (same weights as before)
+  pretrained: true
+  num_classes: 2
+  legacy_dropout: 0.3           # p=0.3 on every nn.Dropout (head + 72 MLP dropouts in the blocks)
+  drop_rate: 0.0
+  drop_path_rate: 0.0
+
+training:
+  optimizer: sgd
+  learning_rate: 0.0001         # head; backbone = learning_rate * backbone_lr_ratio
+  backbone_lr_ratio: 0.1
+  momentum: 0.8
+  weight_decay: 0.00001
+  label_smoothing: 0.0
+  epochs: 60
+  schedule: gradual_unfreeze    # legacy: head-only <=10, +2 stages <=30, all after; optimizer rebuilt each epoch
+  early_stopping:
+    mode: none                  # legacy: patience/delta were never applied
+  amp: false                    # legacy ran in fp32
+  grad_clip: 0.0
+
+selection:
+  monitor: val_loss             # val_loss | val_acc
+
+paths:
+  checkpoints:
+    colab: "/content/drive/MyDrive/cloud_detection/checkpoints"
+    local: "./checkpoints"
+  results:
+    colab: "/content/drive/MyDrive/cloud_detection/results"
+    local: "./results"
