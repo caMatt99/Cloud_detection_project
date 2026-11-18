@@ -3,6 +3,7 @@ Model-agnostic training primitives: one epoch of train/eval, optimizer
 factory, early stopping and best-checkpoint tracking.
 """
 
+import math
 from contextlib import nullcontext
 from typing import Iterable, Optional, Tuple
 
@@ -119,6 +120,8 @@ class BestCheckpoint:
         return (val_loss,) if self.monitor == "val_loss" else (-val_acc, val_loss)
 
     def update(self, model: nn.Module, epoch: int, val_loss: float, val_acc: float) -> bool:
+        if not math.isfinite(val_loss):   # NaN compares False with everything: it would stay "best" forever
+            return False
         key = self._key(val_loss, val_acc)
         if self.best_key is None or key < self.best_key:
             self.best_key, self.best_epoch = key, epoch
@@ -127,6 +130,8 @@ class BestCheckpoint:
         return False
 
     def restore(self, model: nn.Module) -> None:
+        if self.state_dict is None:
+            raise RuntimeError("No epoch with a finite validation loss: nothing to restore.")
         model.load_state_dict(self.state_dict)
 
 
