@@ -1,0 +1,49 @@
+# ResNet50 — same as resnet50_paper.yaml, ONE change: no early stopping.
+# The paper criterion (|Δval_loss| < 0.05 for 3 epochs) stops SGD lr 1e-4 at
+# epoch 5-6 while val loss is still decreasing; here all 60 epochs run and the
+# epoch is chosen on validation (selection.monitor), as in every other config.
+experiment:
+  name: resnet50-paper-full
+  seeds: [0, 1, 2]
+  deterministic: true
+  check_split: true
+  save_checkpoint: true
+
+dataset:
+  path:
+    kaggle: auto                # dir with train/ val/ test/ found under /kaggle/input
+    local: "/Users/matteo/Desktop/Cloud_detection_project/data/dataset"
+  image_size: 224
+  batch_size: 12                # not specified by the paper
+  num_workers: 2                # fixed: a different worker count changes the augmentation stream of a seed
+  normalization: imagenet
+  augmentation: paper           # horizontal flip only
+
+model:
+  name: resnet50_tv             # torchvision IMAGENET1K_V1, fc -> 2 logits, no extra dropout
+  pretrained: true
+  num_classes: 2
+
+training:
+  optimizer: sgd
+  learning_rate: 0.0001         # Table 2, SGD #2
+  momentum: 0.8
+  weight_decay: 0.00001
+  label_smoothing: 0.0
+  epochs: 60
+  schedule: full
+  early_stopping:
+    mode: none                  # only change vs resnet50_paper.yaml
+  amp: false
+  grad_clip: 0.0
+
+selection:
+  monitor: val_loss
+
+paths:
+  checkpoints:
+    kaggle: "/kaggle/working/checkpoints"
+    local: "./checkpoints"
+  results:
+    kaggle: "/kaggle/working/results"
+    local: "./results"

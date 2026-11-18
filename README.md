@@ -75,6 +75,7 @@ or from `notebooks/02_baseline.ipynb` / `notebooks/03_new_model.ipynb` (set `CON
 | Config | Purpose |
 |---|---|
 | `resnet50_paper.yaml` | Paper replica: torchvision ResNet50, SGD (lr 1e-4, momentum 0.8, wd 1e-5), flip only, ImageNet normalization, paper early stopping (\|Δval_loss\| < 0.05 for 3 epochs). |
+| `resnet50_paper_full.yaml` | Same as `resnet50_paper.yaml` without early stopping: 60 epochs, epoch selected on validation. Isolates the effect of the paper's stopping criterion, which halts training at epoch 5–6. |
 | `convnext_legacy.yaml` | The ConvNeXt-Base recipe that produced the earlier single-run 92.77%: gradual unfreezing with the optimizer rebuilt every epoch, train-split normalization, RandAugment + Cutout, dropout 0.3 on every `nn.Dropout`, no early stopping. Kept to re-measure that result over seeds. |
 
 ---
@@ -109,7 +110,8 @@ The 92.77% run was neither seeded nor selected on validation, so it is being re-
 Cloud_detection_project/
 ├── configs/
 │   ├── convnext_legacy.yaml
-│   └── resnet50_paper.yaml
+│   ├── resnet50_paper.yaml
+│   └── resnet50_paper_full.yaml
 ├── notebooks/
 │   ├── 01_eda.ipynb
 │   ├── 02_baseline.ipynb
