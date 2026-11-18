@@ -11,8 +11,9 @@ Protocol (Phase 0):
     experiment.name so the group view gives the same aggregate
 
 Usage:
-    from experiment import run_seeds
-    df = run_seeds(load_config("configs/convnext_legacy.yaml"))
+    from experiment import run_seeds, run_seeds_parallel
+    table = run_seeds(load_config("configs/convnext_legacy.yaml"))       # sequential, in-process
+    table = run_seeds_parallel("configs/convnext_legacy.yaml")           # one process per GPU (Kaggle T4 x2)
 
     python src/experiment.py --config configs/convnext_legacy.yaml --seeds 0 1 2
 """
@@ -20,6 +21,8 @@ Usage:
 import argparse
 import json
 import os
+import subprocess
+import sys
 import time
 from typing import Any, Dict, List, Optional
 
@@ -205,22 +208,101 @@ def summarize(per_seed: List[Dict[str, Any]]) -> pd.DataFrame:
     return pd.concat([df, numeric.agg(["mean", "std", "min", "max"])])
 
 
-def run_seeds(cfg: Dict[str, Any], seeds: Optional[List[int]] = None, use_wandb: bool = True) -> pd.DataFrame:
-    seeds = seeds if seeds is not None else cfg["experiment"].get("seeds", [0, 1, 2])
-    per_seed = [run_experiment(cfg, s, use_wandb) for s in seeds]
-    table = summarize(per_seed)
+def _results_dir(cfg: Dict[str, Any]) -> str:
+    return os.path.join(cfg["paths"]["results"], cfg["experiment"]["name"])
 
-    res_dir = cfg.get("paths", {}).get("results")
-    if res_dir:
-        out = os.path.join(res_dir, cfg["experiment"]["name"], "summary.csv")
+
+def load_seed_results(cfg: Dict[str, Any], seeds: List[int]) -> List[Dict[str, Any]]:
+    """Reads the per-seed JSON files written by run_experiment."""
+    out = []
+    for s in seeds:
+        with open(os.path.join(_results_dir(cfg), f"seed{s}.json")) as f:
+            out.append(json.load(f))
+    return out
+
+
+def report(cfg: Dict[str, Any], per_seed: List[Dict[str, Any]]) -> pd.DataFrame:
+    """Builds the summary table, writes summary.csv and prints the headline columns."""
+    table = summarize(per_seed)
+    if cfg.get("paths", {}).get("results"):
+        out = os.path.join(_results_dir(cfg), "summary.csv")
         table.to_csv(out)
         print(f"[summary] written to {out}")
 
     cols = [f"test_{tag}_{m}" for tag in ("best", "last") for m in ("accuracy", "f1", "precision", "recall")]
-    print(f"\n=== {cfg['experiment']['name']}  ({len(seeds)} seeds) ===")
+    print(f"\n=== {cfg['experiment']['name']}  ({len(per_seed)} seeds) ===")
     print(table[["best_epoch", "stopped_epoch", "val_acc_best", *cols]].round(4).to_string())
     print(f"paper ResNet50 (single best run): {PAPER_RESNET50}")
     return table
+
+
+def run_seeds(cfg: Dict[str, Any], seeds: Optional[List[int]] = None, use_wandb: bool = True) -> pd.DataFrame:
+    seeds = seeds if seeds is not None else cfg["experiment"].get("seeds", [0, 1, 2])
+    return report(cfg, [run_experiment(cfg, s, use_wandb) for s in seeds])
+
+
+def run_seeds_parallel(
+    config_path: str,
+    seeds: Optional[List[int]] = None,
+    use_wandb: bool = True,
+    poll_s: int = 60,
+) -> pd.DataFrame:
+    """
+    One worker process per visible GPU, seeds assigned round-robin
+    (T4 x2, seeds 0 1 2 -> GPU0: 0, 2 · GPU1: 1). Each worker sees a single GPU
+    through CUDA_VISIBLE_DEVICES, so a seed gives the same run as in-process.
+    Worker output goes to <results>/<experiment>/logs/gpu<i>.log; the last
+    line of each log is printed every `poll_s` seconds.
+    With 0-1 GPUs it falls back to run_seeds().
+    """
+    cfg = load_config(config_path)
+    seeds = seeds if seeds is not None else cfg["experiment"].get("seeds", [0, 1, 2])
+    n_gpu = torch.cuda.device_count()
+    if n_gpu <= 1 or len(seeds) == 1:
+        return run_seeds(cfg, seeds, use_wandb)
+
+    assignment = {g: seeds[g::n_gpu] for g in range(min(n_gpu, len(seeds)))}
+    log_dir = os.path.join(_results_dir(cfg), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+
+    procs = {}
+    for gpu, gpu_seeds in assignment.items():
+        cmd = [sys.executable, os.path.abspath(__file__), "--config", cfg["_config_path"],
+               "--seeds", *map(str, gpu_seeds), "--worker"]
+        if not use_wandb:
+            cmd.append("--no-wandb")
+        env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(gpu), "PYTHONUNBUFFERED": "1"}
+        log_path = os.path.join(log_dir, f"gpu{gpu}.log")
+        with open(log_path, "w") as log_file:   # the child keeps its own copy of the fd
+            procs[gpu] = (subprocess.Popen(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT), log_path)
+        print(f"[parallel] GPU{gpu}: seeds {gpu_seeds}  log {log_path}")
+
+    def last_line(path: str) -> str:
+        with open(path, errors="replace") as f:
+            lines = [l.strip() for l in f if l.strip()]
+        return lines[-1] if lines else "(no output yet)"
+
+    t0 = time.time()
+    try:
+        while any(p.poll() is None for p, _ in procs.values()):
+            time.sleep(poll_s)
+            print(f"[parallel] {(time.time() - t0) / 60:5.1f} min")
+            for gpu, (p, log) in procs.items():
+                state = "running" if p.poll() is None else f"exit {p.returncode}"
+                print(f"  GPU{gpu} [{state}] {last_line(log)}")
+    except KeyboardInterrupt:
+        for p, _ in procs.values():
+            p.terminate()
+        raise
+
+    failed = {gpu: log for gpu, (p, log) in procs.items() if p.returncode != 0}
+    if failed:
+        tails = "\n".join(f"--- GPU{g} ({log}) ---\n" + "".join(open(log, errors="replace").readlines()[-30:])
+                          for g, log in failed.items())
+        raise RuntimeError(f"Worker(s) failed:\n{tails}")
+
+    print(f"[parallel] done in {(time.time() - t0) / 60:.1f} min")
+    return report(cfg, load_seed_results(cfg, seeds))
 
 
 def main() -> None:
@@ -228,8 +310,20 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--seeds", type=int, nargs="*")
     parser.add_argument("--no-wandb", action="store_true")
+    parser.add_argument("--parallel", action="store_true", help="one process per GPU")
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)  # used by run_seeds_parallel
     args = parser.parse_args()
-    run_seeds(load_config(args.config), args.seeds, use_wandb=not args.no_wandb)
+
+    use_wandb = not args.no_wandb
+    if args.parallel:
+        run_seeds_parallel(args.config, args.seeds, use_wandb)
+        return
+    cfg = load_config(args.config)
+    if args.worker:
+        for s in args.seeds:
+            run_experiment(cfg, s, use_wandb)
+        return
+    run_seeds(cfg, args.seeds, use_wandb)
 
 
 if __name__ == "__main__":

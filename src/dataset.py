@@ -40,7 +40,7 @@ EXPECTED_SPLIT: Dict[str, Dict[str, int]] = {
 # ─────────────────────────────────────────────
 
 def _list_images(directory: str) -> List[str]:
-    """Sorted, hidden-file-free listing — os.listdir order is not stable on Drive."""
+    """Sorted, hidden-file-free listing — os.listdir order is not filesystem-stable."""
     if not os.path.isdir(directory):
         return []
     return sorted(f for f in os.listdir(directory) if not f.startswith("."))
@@ -141,7 +141,7 @@ class Cutout:
 def compute_dataset_stats(dataset_path: str, split: str = "train") -> Tuple[Tuple[float, ...], Tuple[float, ...]]:
     """
     Per-channel mean/std on the [0, 1] scale over `split` (train only, to
-    avoid leaking val/test). Cached: multi-seed runs read Drive once.
+    avoid leaking val/test). Cached: multi-seed runs read the images once.
     """
     channel_sum = np.zeros(3, dtype=np.float64)
     channel_sq_sum = np.zeros(3, dtype=np.float64)

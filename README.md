@@ -18,11 +18,22 @@ All are pinned in `requirements.txt`.
 
 ## Installation
 
+Local (code editing, EDA, CPU smoke tests):
+
 ```bash
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+Training runs on Kaggle (GPU T4 x2). Each notebook's first cell clones the repo into `/tmp`, so `src/` and `configs/` always come from the pushed `main`; results and checkpoints go to `/kaggle/working`. Once per notebook:
+
+1. Settings → Accelerator *GPU T4 x2*, Internet *On*.
+2. *Add Input* → the dataset, **already split** into `train/val/test` (`/kaggle/input` is read-only, so the split cannot be created there). `dataset.path.kaggle: auto` finds the folder under `/kaggle/input`, ignoring `__MACOSX`; if several candidates exist, set the path explicitly in the YAML.
+3. Add-ons → Secrets → `WANDB_API_KEY` (and `GITHUB_TOKEN` only if the repo is private), enabled for the notebook.
+4. For multi-seed runs use *Save Version → Save & Run All*: it runs unattended and keeps the outputs.
+
+Notebook cells are not synced from GitHub: after changing a notebook in the repo, re-import it on Kaggle. The setup cell prints the commit in use.
 
 ---
 
@@ -48,7 +59,7 @@ python src/experiment.py --config configs/resnet50_paper.yaml          # seeds f
 python src/experiment.py --config configs/convnext_legacy.yaml --seeds 0 1 2
 ```
 
-or from `notebooks/02_baseline.ipynb` / `notebooks/03_new_model.ipynb` (set `CONFIG_PATH`). Per-seed results and a `summary.csv` (mean / std / min / max) are written to `paths.results/<experiment.name>/`, the val-selected weights to `paths.checkpoints/<experiment.name>/seed<k>.pt`.
+or from `notebooks/02_baseline.ipynb` / `notebooks/03_new_model.ipynb` (set `CONFIG_PATH`), which call `run_seeds_parallel()`: with two GPUs it starts one worker process per GPU and assigns seeds round-robin (seeds 0 1 2 → GPU0: 0, 2 · GPU1: 1), logging to `<results>/<experiment>/logs/gpu<i>.log`; with one GPU it runs the seeds sequentially. The CLI equivalent is `--parallel`. Per-seed results and a `summary.csv` (mean / std / min / max) are written to `paths.results/<experiment.name>/`, the val-selected weights to `paths.checkpoints/<experiment.name>/seed<k>.pt`.
 
 ### 3. Evaluation protocol
 
@@ -83,12 +94,12 @@ The 92.77% run was neither seeded nor selected on validation, so it is being re-
 
 | Module | Contents |
 |---|---|
-| `src/utils.py` | `seed_everything()`, `seed_worker()`, `load_config()` (resolves `colab`/`local` paths), `flatten_dict()`. |
+| `src/utils.py` | `seed_everything()`, `seed_worker()`, environment detection (`kaggle` / `local`), `get_secret()`, `print_env()` (GPU / torch-build check), `find_dataset_root()`, `load_config()` (resolves per-environment entries and `dataset.path: auto`), `flatten_dict()`. |
 | `src/dataset.py` | Split utilities (`check_split`, `split_fingerprint`, `make_val_split`), transforms (`paper` / `randaugment`, `imagenet` / `local` normalization), seeded `get_dataloaders()`. |
 | `src/models.py` | `get_model()` with pinned timm tags and torchvision `resnet50_tv`; `drop_rate` / `drop_path_rate`; legacy helpers `apply_legacy_dropout()` and `get_unfrozen_params()`. |
 | `src/engine.py` | `train_one_epoch()` / `evaluate()` with optional AMP and gradient clipping, `build_optimizer()`, `BestCheckpoint`, `EarlyStopping` (`none` / `paper` / `standard`). |
 | `src/evaluate.py` | Binary + weighted metrics, confusion matrix, training curves, model comparison chart. |
-| `src/experiment.py` | `run_experiment(cfg, seed)`, `run_seeds(cfg)`, CLI entry point. |
+| `src/experiment.py` | `run_experiment(cfg, seed)`, `run_seeds(cfg)`, `run_seeds_parallel(config_path)` (one process per GPU), `report()`, CLI entry point. |
 
 ---
 
