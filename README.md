@@ -9,10 +9,11 @@ This project benchmarks CNN and transformer architectures for binary cloud detec
 
 - Python 3.9 or later (required by `torch>=2.0`)
 - Training/inference: `torch`, `torchvision`, `timm`
-- Metrics and plotting: `scikit-learn`, `matplotlib`, `numpy`, `pandas`
-- Config and utilities: `pyyaml`, `tqdm`
+- Tracking: `wandb`
+- Metrics, statistics and plotting: `scikit-learn`, `scipy`, `matplotlib`, `numpy`, `pandas`, `pillow`
+- Config and notebooks: `pyyaml`, `jupyterlab`
 
-All are pinned in `requirements.txt`.
+Direct dependencies are pinned in `requirements.txt`.
 
 ---
 
