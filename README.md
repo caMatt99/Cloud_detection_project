@@ -1,7 +1,7 @@
 # Cloud Detection – Ceilometer Backscatter Classification
 
 ## Overview
-This project benchmarks CNN and transformer architectures for binary cloud detection (cloudy / clear) from ceilometer lidar backscatter profile images. It reproduces the baseline from Chisari et al., *"Cloud Detection Challenge – Methods and Results"* (IEEE Access, 2025) and *"On the Cloud Detection from Backscattered Images..."* (ICIP, 2024), then evaluates newer architectures (ConvNeXt-Base, Swin Transformer) against it. The data source is the public Zenodo dataset [record 10616434](https://zenodo.org/records/10616434): 1000×150 backscatter images split into `train`/`val`/`test`, each containing `true` (cloudy) and `false` (clear) subfolders. Every experiment is a YAML config run over several seeds by `src/experiment.py`, from the notebooks or the command line, and tracked on Weights & Biases.
+This project benchmarks CNN and transformer architectures for binary cloud detection (cloudy / clear) from ceilometer lidar backscatter profile images. It reproduces the baseline from Chisari et al., *"Cloud Detection Challenge – Methods and Results"* (IEEE Access, 2025) and *"On the Cloud Detection from Backscattered Images..."* (ICIP, 2024), then evaluates newer architectures (ConvNeXt-Base, Swin Transformer) against it. The data source is the public Zenodo dataset [record 10616434](https://zenodo.org/records/10616434): 1000×150 backscatter images split into `train`/`val`/`test`, each containing `true` (cloudy) and `false` (clear) subfolders. Every experiment is a YAML config run over several seeds by `src/experiment.py`, from the notebooks or the command line. Per-seed results and aggregates are written to `paths.results/<experiment.name>/`.
 
 ---
 
@@ -9,7 +9,6 @@ This project benchmarks CNN and transformer architectures for binary cloud detec
 
 - Python 3.9 or later (required by `torch>=2.0`)
 - Training/inference: `torch`, `torchvision`, `timm`
-- Tracking: `wandb`
 - Metrics, statistics and plotting: `scikit-learn`, `scipy`, `matplotlib`, `numpy`, `pandas`, `pillow`
 - Config and notebooks: `pyyaml`, `jupyterlab`
 
@@ -31,7 +30,7 @@ Training runs on Kaggle (GPU T4 x2). Each notebook's first cell clones the repo 
 
 1. Settings → Accelerator *GPU T4 x2*, Internet *On*.
 2. *Add Input* → the dataset, **already split** into `train/val/test` (`/kaggle/input` is read-only, so the split cannot be created there). `dataset.path.kaggle: auto` finds the folder under `/kaggle/input`, ignoring `__MACOSX`; if several candidates exist, set the path explicitly in the YAML.
-3. Add-ons → Secrets → `WANDB_API_KEY` (and `GITHUB_TOKEN` only if the repo is private), enabled for the notebook.
+3. Add-ons → Secrets → `GITHUB_TOKEN` only if the repo is private, enabled for the notebook.
 4. For multi-seed runs use *Save Version → Save & Run All*: it runs unattended and keeps the outputs.
 
 Notebook cells are not synced from GitHub: after changing a notebook in the repo, re-import it on Kaggle. The setup cell prints the commit in use.
@@ -53,7 +52,7 @@ Every run calls `check_split()`, which fails if the on-disk counts differ from t
 
 ### 2. Run an experiment
 
-An experiment is a YAML file in `configs/`. It is run once per seed; each seed is one W&B run, grouped by `experiment.name`.
+An experiment is a YAML file in `configs/`. It is run once per seed.
 
 ```bash
 python src/experiment.py --config configs/resnet50_paper.yaml          # seeds from the config
@@ -65,7 +64,7 @@ or from `notebooks/02_baseline.ipynb` / `notebooks/03_new_model.ipynb` (set `CON
 ### 3. Evaluation protocol
 
 - the checkpoint is selected on validation (`selection.monitor`: `val_loss` or `val_acc`), never on test;
-- test is reported with the selected weights (`test/*` in W&B) and with the last-epoch weights (`test_last/*`);
+- test is reported both with the val-selected weights and with the last-epoch weights (`test_best_*` / `test_last_*` in the per-seed JSON);
 - precision / recall / F1 are binary with positive class `true`, as in the paper (weighted averages are logged too);
 - results are compared as mean ± std over seeds. The test set has 470 images, so one image is 0.21 pp.
 
@@ -95,7 +94,7 @@ The 92.77% run was neither seeded nor selected on validation, so it is being re-
 
 | Module | Contents |
 |---|---|
-| `src/utils.py` | `seed_everything()`, `seed_worker()`, environment detection (`kaggle` / `local`), `get_secret()`, `print_env()` (GPU / torch-build check), `find_dataset_root()`, `load_config()` (resolves per-environment entries and `dataset.path: auto`), `flatten_dict()`. |
+| `src/utils.py` | `seed_everything()`, `seed_worker()`, environment detection (`kaggle` / `local`), `print_env()` (GPU / torch-build check), `find_dataset_root()`, `load_config()` (resolves per-environment entries and `dataset.path: auto`), `flatten_dict()`. |
 | `src/dataset.py` | Split utilities (`check_split`, `split_fingerprint`, `make_val_split`), transforms (`paper` / `randaugment`, `imagenet` / `local` normalization), seeded `get_dataloaders()`. |
 | `src/models.py` | `get_model()` with pinned timm tags and torchvision `resnet50_tv`; `drop_rate` / `drop_path_rate`; legacy helpers `apply_legacy_dropout()` and `get_unfrozen_params()`. |
 | `src/engine.py` | `train_one_epoch()` / `evaluate()` with optional AMP and gradient clipping, `build_optimizer()`, `BestCheckpoint`, `EarlyStopping` (`none` / `paper` / `standard`). |

@@ -1,5 +1,5 @@
 """
-Experiment runner: one config + one seed -> one W&B run.
+Experiment runner: one config + one seed -> one JSON file.
 
 Protocol (Phase 0):
   - every source of randomness is seeded; the split is verified and fingerprinted
@@ -7,8 +7,7 @@ Protocol (Phase 0):
   - test is evaluated once with the selected weights ("best") and, for
     comparability with the old runs, once with the last-epoch weights ("last")
   - headline metrics are binary (positive = 'true'), as in the paper
-  - several seeds per config, reported as mean ± std; W&B groups runs by
-    experiment.name so the group view gives the same aggregate
+  - several seeds per config, reported as mean ± std
 
 Usage:
     from experiment import run_seeds, run_seeds_parallel
@@ -29,16 +28,11 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import torch
 import torch.nn as nn
-import wandb
-
 from dataset import check_split, get_dataloaders, split_fingerprint
 from engine import BestCheckpoint, EarlyStopping, build_optimizer, evaluate, train_one_epoch
 from evaluate import PAPER_RESNET50, compute_metrics
 from models import apply_legacy_dropout, count_parameters, get_device, get_model, get_unfrozen_params
-from utils import flatten_dict, load_config, seed_everything
-
-REPORT_METRICS = ("accuracy", "n_correct", "f1", "precision", "recall")
-
+from utils import load_config, seed_everything
 
 def _build_model(cfg: Dict[str, Any], device: torch.device) -> nn.Module:
     m = cfg["model"]
@@ -57,7 +51,7 @@ def _build_model(cfg: Dict[str, Any], device: torch.device) -> nn.Module:
     return model.to(device)
 
 
-def run_experiment(cfg: Dict[str, Any], seed: int, use_wandb: bool = True) -> Dict[str, Any]:
+def run_experiment(cfg: Dict[str, Any], seed: int) -> Dict[str, Any]:
     exp, d, t, sel = cfg["experiment"], cfg["dataset"], cfg["training"], cfg.get("selection", {})
     seed_everything(seed, exp.get("deterministic", True))
     device = get_device()
@@ -94,95 +88,57 @@ def run_experiment(cfg: Dict[str, Any], seed: int, use_wandb: bool = True) -> Di
     best = BestCheckpoint(sel.get("monitor", "val_loss"))
     stopper = EarlyStopping(**t.get("early_stopping", {"mode": "none"}))
 
-    run = None
-    if use_wandb:
-        run = wandb.init(
-            project=exp.get("wandb_project", "cloud-detection"),
-            group=exp["name"],
-            name=f"{exp['name']}-s{seed}",
-            job_type="train",
-            tags=exp.get("tags", []),
-            config={**flatten_dict({k: v for k, v in cfg.items() if not k.startswith("_")}),
-                    "seed": seed, "split_fingerprint": fingerprint, "amp_active": amp},
-            reinit="finish_previous",
-        )
-
     history: Dict[str, List[float]] = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
-    try:
-        epoch = 0
-        for epoch in range(1, t["epochs"] + 1):
-            t0 = time.time()
-            log: Dict[str, Any] = {"epoch": epoch}
-
-            if schedule == "gradual_unfreeze":
-                # LEGACY: optimizer rebuilt every epoch (momentum reset), as in commit 89cf8be.
-                groups, phase = get_unfrozen_params(
-                    model, epoch, lr_head=t["learning_rate"],
-                    lr_backbone=t["learning_rate"] * t.get("backbone_lr_ratio", 0.1),
-                )
-                optimizer = build_optimizer(groups, **opt_kwargs)
-                log["unfreeze_phase"] = phase
-
-            tr_loss, tr_acc = train_one_epoch(
-                model, train_loader, criterion, optimizer, device, scaler, t.get("grad_clip", 0.0)
+    epoch = 0
+    for epoch in range(1, t["epochs"] + 1):
+        t0 = time.time()
+        phase = None
+        if schedule == "gradual_unfreeze":
+            # LEGACY: optimizer rebuilt every epoch (momentum reset), as in commit 89cf8be.
+            groups, phase = get_unfrozen_params(
+                model, epoch, lr_head=t["learning_rate"],
+                lr_backbone=t["learning_rate"] * t.get("backbone_lr_ratio", 0.1),
             )
-            va_loss, va_acc, _, _ = evaluate(model, val_loader, criterion, device, amp)
-            improved = best.update(model, epoch, va_loss, va_acc)
+            optimizer = build_optimizer(groups, **opt_kwargs)
 
-            for k, v in zip(history, (tr_loss, tr_acc, va_loss, va_acc)):
-                history[k].append(v)
-            log.update({"train/loss": tr_loss, "train/accuracy": tr_acc,
-                        "val/loss": va_loss, "val/accuracy": va_acc, "epoch_time_s": time.time() - t0})
-            if run:
-                run.log(log)
-            print(f"[s{seed}] ep {epoch:3d}  train {tr_loss:.4f}/{tr_acc:.4f}  "
-                  f"val {va_loss:.4f}/{va_acc:.4f}{'  *' if improved else ''}  ({log['epoch_time_s']:.0f}s)")
+        tr_loss, tr_acc = train_one_epoch(
+            model, train_loader, criterion, optimizer, device, scaler, t.get("grad_clip", 0.0)
+        )
+        va_loss, va_acc, _, _ = evaluate(model, val_loader, criterion, device, amp)
+        improved = best.update(model, epoch, va_loss, va_acc)
 
-            if stopper.step(va_loss):
-                print(f"[s{seed}] early stopping at epoch {epoch} ({stopper.mode})")
-                break
-        stopped_epoch = epoch
+        for k, v in zip(history, (tr_loss, tr_acc, va_loss, va_acc)):
+            history[k].append(v)
+        phase_str = f"  phase={phase}" if phase is not None else ""
+        print(f"[s{seed}] ep {epoch:3d}  train {tr_loss:.4f}/{tr_acc:.4f}  "
+              f"val {va_loss:.4f}/{va_acc:.4f}{'  *' if improved else ''}{phase_str}  ({time.time() - t0:.0f}s)")
 
-        results: Dict[str, Any] = {
-            "seed": seed,
-            "split_fingerprint": fingerprint,
-            "best_epoch": best.best_epoch,
-            "stopped_epoch": stopped_epoch,
-            "val_loss_best": history["val_loss"][best.best_epoch - 1],
-            "val_acc_best": history["val_acc"][best.best_epoch - 1] * 100,
-        }
-        preds_best = None
-        for tag in ("last", "best"):
-            if tag == "best":
-                best.restore(model)
-            te_loss, _, probs, labels = evaluate(model, test_loader, criterion, device, amp)
-            preds = (probs >= 0.5).astype(int)
-            metrics = compute_metrics(labels, preds)
-            results.update({f"test_{tag}_loss": te_loss, **{f"test_{tag}_{k}": v for k, v in metrics.items()}})
-            if tag == "best":
-                preds_best = preds
+        if stopper.step(va_loss):
+            print(f"[s{seed}] early stopping at epoch {epoch} ({stopper.mode})")
+            break
+    stopped_epoch = epoch
 
-        print(f"[s{seed}] best epoch {best.best_epoch} | "
-              f"test acc best={results['test_best_accuracy']:.2f}% ({results['test_best_n_correct']}/"
-              f"{results['test_best_n_total']})  last={results['test_last_accuracy']:.2f}%")
+    results: Dict[str, Any] = {
+        "seed": seed,
+        "split_fingerprint": fingerprint,
+        "best_epoch": best.best_epoch,
+        "stopped_epoch": stopped_epoch,
+        "val_loss_best": history["val_loss"][best.best_epoch - 1],
+        "val_acc_best": history["val_acc"][best.best_epoch - 1] * 100,
+    }
+    for tag in ("last", "best"):
+        if tag == "best":
+            best.restore(model)
+        te_loss, _, probs, labels = evaluate(model, test_loader, criterion, device, amp)
+        preds = (probs >= 0.5).astype(int)
+        metrics = compute_metrics(labels, preds)
+        results.update({f"test_{tag}_loss": te_loss, **{f"test_{tag}_{k}": v for k, v in metrics.items()}})
 
-        _save_outputs(cfg, seed, model, results, history)
+    print(f"[s{seed}] best epoch {best.best_epoch} | "
+          f"test acc best={results['test_best_accuracy']:.2f}% ({results['test_best_n_correct']}/"
+          f"{results['test_best_n_total']})  last={results['test_last_accuracy']:.2f}%")
 
-        if run:
-            run.summary.update({
-                **{f"test/{k}": results[f"test_best_{k}"] for k in (*REPORT_METRICS, "loss")},
-                **{f"test_last/{k}": results[f"test_last_{k}"] for k in (*REPORT_METRICS, "loss")},
-                "best_epoch": results["best_epoch"],
-                "stopped_epoch": stopped_epoch,
-                "val/accuracy_best": results["val_acc_best"],
-                "val/loss_best": results["val_loss_best"],
-            })
-            run.log({"test/confusion_matrix": wandb.plot.confusion_matrix(
-                y_true=labels.tolist(), preds=preds_best.tolist(), class_names=class_names)})
-    finally:
-        if run:
-            run.finish()
-
+    _save_outputs(cfg, seed, model, results, history)
     results["history"] = history
     return results
 
@@ -236,15 +192,14 @@ def report(cfg: Dict[str, Any], per_seed: List[Dict[str, Any]]) -> pd.DataFrame:
     return table
 
 
-def run_seeds(cfg: Dict[str, Any], seeds: Optional[List[int]] = None, use_wandb: bool = True) -> pd.DataFrame:
+def run_seeds(cfg: Dict[str, Any], seeds: Optional[List[int]] = None) -> pd.DataFrame:
     seeds = seeds if seeds is not None else cfg["experiment"].get("seeds", [0, 1, 2])
-    return report(cfg, [run_experiment(cfg, s, use_wandb) for s in seeds])
+    return report(cfg, [run_experiment(cfg, s) for s in seeds])
 
 
 def run_seeds_parallel(
     config_path: str,
     seeds: Optional[List[int]] = None,
-    use_wandb: bool = True,
     poll_s: int = 60,
 ) -> pd.DataFrame:
     """
@@ -259,7 +214,7 @@ def run_seeds_parallel(
     seeds = seeds if seeds is not None else cfg["experiment"].get("seeds", [0, 1, 2])
     n_gpu = torch.cuda.device_count()
     if n_gpu <= 1 or len(seeds) == 1:
-        return run_seeds(cfg, seeds, use_wandb)
+        return run_seeds(cfg, seeds)
 
     assignment = {g: seeds[g::n_gpu] for g in range(min(n_gpu, len(seeds)))}
     log_dir = os.path.join(_results_dir(cfg), "logs")
@@ -269,8 +224,6 @@ def run_seeds_parallel(
     for gpu, gpu_seeds in assignment.items():
         cmd = [sys.executable, os.path.abspath(__file__), "--config", cfg["_config_path"],
                "--seeds", *map(str, gpu_seeds), "--worker"]
-        if not use_wandb:
-            cmd.append("--no-wandb")
         env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(gpu), "PYTHONUNBUFFERED": "1"}
         log_path = os.path.join(log_dir, f"gpu{gpu}.log")
         with open(log_path, "w") as log_file:   # the child keeps its own copy of the fd
@@ -309,21 +262,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run one config over several seeds.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--seeds", type=int, nargs="*")
-    parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--parallel", action="store_true", help="one process per GPU")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)  # used by run_seeds_parallel
     args = parser.parse_args()
 
-    use_wandb = not args.no_wandb
     if args.parallel:
-        run_seeds_parallel(args.config, args.seeds, use_wandb)
+        run_seeds_parallel(args.config, args.seeds)
         return
     cfg = load_config(args.config)
     if args.worker:
         for s in args.seeds:
-            run_experiment(cfg, s, use_wandb)
+            run_experiment(cfg, s)
         return
-    run_seeds(cfg, args.seeds, use_wandb)
+    run_seeds(cfg, args.seeds)
 
 
 if __name__ == "__main__":

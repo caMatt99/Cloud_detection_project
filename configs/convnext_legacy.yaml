@@ -7,8 +7,6 @@ experiment:
   seeds: [0, 1, 2]
   deterministic: true
   check_split: true
-  wandb_project: cloud-detection
-  tags: [phase0, convnext, legacy]
   save_checkpoint: true
 
 dataset:

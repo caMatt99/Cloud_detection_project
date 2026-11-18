@@ -64,26 +64,6 @@ def get_env() -> str:
     return "local"
 
 
-def get_secret(name: str, required: bool = True) -> Optional[str]:
-    """
-    Kaggle: Add-ons -> Secrets (must be enabled for the notebook).
-    Local : environment variable with the same name.
-    """
-    value = os.environ.get(name)
-    if not value and get_env() == "kaggle":
-        try:
-            from kaggle_secrets import UserSecretsClient
-            value = UserSecretsClient().get_secret(name)
-        except Exception:
-            value = None
-    if required and not value:
-        raise RuntimeError(
-            f"Secret '{name}' not found. On Kaggle: Add-ons -> Secrets, add it and enable it "
-            "for this notebook. Locally: export it as an environment variable."
-        )
-    return value
-
-
 def print_env() -> None:
     """One-screen summary of the runtime; warns if the PyTorch build cannot use the GPU."""
     import timm
