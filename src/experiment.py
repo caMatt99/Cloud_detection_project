@@ -20,6 +20,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -177,13 +178,39 @@ def load_seed_results(cfg: Dict[str, Any], seeds: List[int]) -> List[Dict[str, A
     return out
 
 
+def archive_results(cfg: Dict[str, Any]) -> str:
+    """Zips <results>/<experiment>/ (per-seed JSON, summary.csv, logs) into <results>/<experiment>.zip."""
+    res_dir = _results_dir(cfg)
+    return os.path.abspath(shutil.make_archive(res_dir, "zip", res_dir))
+
+
+def download_link(cfg: Dict[str, Any]) -> None:
+    """
+    Notebook helper: shows a clickable link to the results zip.
+    Kaggle only serves files under /kaggle/working, and FileLink resolves the
+    path against the current directory, so the link is rendered from there.
+    """
+    zip_path = archive_results(cfg)
+    if cfg["_env"] != "kaggle":
+        print(f"[results] {zip_path}")
+        return
+    from IPython.display import FileLink, display
+    root, prev = "/kaggle/working", os.getcwd()
+    os.chdir(root)
+    try:
+        display(FileLink(os.path.relpath(zip_path, root)))
+    finally:
+        os.chdir(prev)
+
+
 def report(cfg: Dict[str, Any], per_seed: List[Dict[str, Any]]) -> pd.DataFrame:
-    """Builds the summary table, writes summary.csv and prints the headline columns."""
+    """Builds the summary table, writes summary.csv + the results zip and prints the headline columns."""
     table = summarize(per_seed)
     if cfg.get("paths", {}).get("results"):
         out = os.path.join(_results_dir(cfg), "summary.csv")
         table.to_csv(out)
         print(f"[summary] written to {out}")
+        print(f"[summary] archived to {archive_results(cfg)}")
 
     cols = [f"test_{tag}_{m}" for tag in ("best", "last") for m in ("accuracy", "f1", "precision", "recall")]
     print(f"\n=== {cfg['experiment']['name']}  ({len(per_seed)} seeds) ===")

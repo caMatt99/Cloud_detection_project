@@ -59,7 +59,7 @@ python src/experiment.py --config configs/resnet50_paper.yaml          # seeds f
 python src/experiment.py --config configs/convnext_legacy.yaml --seeds 0 1 2
 ```
 
-or from `notebooks/02_baseline.ipynb` / `notebooks/03_new_model.ipynb` (set `CONFIG_PATH`), which call `run_seeds_parallel()`: with two GPUs it starts one worker process per GPU and assigns seeds round-robin (seeds 0 1 2 → GPU0: 0, 2 · GPU1: 1), logging to `<results>/<experiment>/logs/gpu<i>.log`; with one GPU it runs the seeds sequentially. The CLI equivalent is `--parallel`. Per-seed results and a `summary.csv` (mean / std / min / max) are written to `paths.results/<experiment.name>/`, the val-selected weights to `paths.checkpoints/<experiment.name>/seed<k>.pt`.
+or from `notebooks/02_baseline.ipynb` / `notebooks/03_new_model.ipynb` (set `CONFIG_PATH`), which call `run_seeds_parallel()`: with two GPUs it starts one worker process per GPU and assigns seeds round-robin (seeds 0 1 2 → GPU0: 0, 2 · GPU1: 1), logging to `<results>/<experiment>/logs/gpu<i>.log`; with one GPU it runs the seeds sequentially. The CLI equivalent is `--parallel`. Per-seed results and a `summary.csv` (mean / std / min / max) are written to `paths.results/<experiment.name>/` and zipped to `paths.results/<experiment.name>.zip` (the notebooks' last cell shows a download link on Kaggle), the val-selected weights to `paths.checkpoints/<experiment.name>/seed<k>.pt`.
 
 ### 3. Evaluation protocol
 
@@ -100,7 +100,7 @@ The 92.77% run was neither seeded nor selected on validation, so it is being re-
 | `src/models.py` | `get_model()` with pinned timm tags and torchvision `resnet50_tv`; `drop_rate` / `drop_path_rate`; legacy helpers `apply_legacy_dropout()` and `get_unfrozen_params()`. |
 | `src/engine.py` | `train_one_epoch()` / `evaluate()` with optional AMP and gradient clipping, `build_optimizer()`, `BestCheckpoint`, `EarlyStopping` (`none` / `paper` / `standard`). |
 | `src/evaluate.py` | Binary + weighted metrics, confusion matrix, training curves, model comparison chart. |
-| `src/experiment.py` | `run_experiment(cfg, seed)`, `run_seeds(cfg)`, `run_seeds_parallel(config_path)` (one process per GPU), `report()`, CLI entry point. |
+| `src/experiment.py` | `run_experiment(cfg, seed)`, `run_seeds(cfg)`, `run_seeds_parallel(config_path)` (one process per GPU), `report()`, `archive_results()` / `download_link()`, CLI entry point. |
 
 ---
 
