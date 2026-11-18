@@ -26,9 +26,11 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from sklearn.metrics import roc_auc_score
 from dataset import check_split, get_dataloaders, split_fingerprint
 from engine import BestCheckpoint, EarlyStopping, build_optimizer, evaluate, train_one_epoch
 from evaluate import PAPER_RESNET50, compute_metrics
@@ -127,24 +129,44 @@ def run_experiment(cfg: Dict[str, Any], seed: int) -> Dict[str, Any]:
         "val_loss_best": history["val_loss"][best.best_epoch - 1],
         "val_acc_best": history["val_acc"][best.best_epoch - 1] * 100,
     }
+    # Val and test are evaluated with the last-epoch and the val-selected weights;
+    # per-image P(true) is kept for error analysis and threshold studies.
+    predictions: Dict[str, pd.DataFrame] = {}
     for tag in ("last", "best"):
         if tag == "best":
             best.restore(model)
-        te_loss, _, probs, labels = evaluate(model, test_loader, criterion, device, amp)
-        preds = (probs >= 0.5).astype(int)
-        metrics = compute_metrics(labels, preds)
-        results.update({f"test_{tag}_loss": te_loss, **{f"test_{tag}_{k}": v for k, v in metrics.items()}})
+        for split, loader in (("val", val_loader), ("test", test_loader)):
+            loss, _, probs, labels = evaluate(model, loader, criterion, device, amp)
+            if split not in predictions:
+                predictions[split] = _sample_table(loader, split, labels, d["path"])
+            predictions[split][f"prob_{tag}"] = probs
+            if split == "test":
+                metrics = compute_metrics(labels, (probs >= 0.5).astype(int))
+                results.update({f"test_{tag}_loss": loss, f"test_{tag}_auc": roc_auc_score(labels, probs),
+                                **{f"test_{tag}_{k}": v for k, v in metrics.items()}})
 
     print(f"[s{seed}] best epoch {best.best_epoch} | "
           f"test acc best={results['test_best_accuracy']:.2f}% ({results['test_best_n_correct']}/"
           f"{results['test_best_n_total']})  last={results['test_last_accuracy']:.2f}%")
 
-    _save_outputs(cfg, seed, model, results, history)
+    _save_outputs(cfg, seed, model, results, history, pd.concat(predictions.values(), ignore_index=True))
     results["history"] = history
     return results
 
 
-def _save_outputs(cfg, seed, model, results, history) -> None:
+def _sample_table(loader, split: str, labels: np.ndarray, dataset_path: str) -> pd.DataFrame:
+    """split / file (relative to the dataset root) / label, in loader order (unshuffled)."""
+    samples = loader.dataset.samples
+    if not np.array_equal(labels, [t for _, t in samples]):
+        raise RuntimeError(f"{split} loader order does not match dataset.samples")
+    return pd.DataFrame({
+        "split": split,
+        "file": [os.path.relpath(path, dataset_path) for path, _ in samples],
+        "label": labels,
+    })
+
+
+def _save_outputs(cfg, seed, model, results, history, predictions: pd.DataFrame) -> None:
     exp = cfg["experiment"]
     paths = cfg.get("paths", {})
     if exp.get("save_checkpoint", True) and paths.get("checkpoints"):
@@ -156,6 +178,7 @@ def _save_outputs(cfg, seed, model, results, history) -> None:
         os.makedirs(res_dir, exist_ok=True)
         with open(os.path.join(res_dir, f"seed{seed}.json"), "w") as f:
             json.dump({**results, "history": history}, f, indent=2, default=float)
+        predictions.to_csv(os.path.join(res_dir, f"predictions_seed{seed}.csv"), index=False)
 
 
 def summarize(per_seed: List[Dict[str, Any]]) -> pd.DataFrame:
@@ -212,7 +235,7 @@ def report(cfg: Dict[str, Any], per_seed: List[Dict[str, Any]]) -> pd.DataFrame:
         print(f"[summary] written to {out}")
         print(f"[summary] archived to {archive_results(cfg)}")
 
-    cols = [f"test_{tag}_{m}" for tag in ("best", "last") for m in ("accuracy", "f1", "precision", "recall")]
+    cols = [f"test_{tag}_{m}" for tag in ("best", "last") for m in ("accuracy", "f1", "precision", "recall", "auc")]
     print(f"\n=== {cfg['experiment']['name']}  ({len(per_seed)} seeds) ===")
     print(table[["best_epoch", "stopped_epoch", "val_acc_best", *cols]].round(4).to_string())
     print(f"paper ResNet50 (single best run): {PAPER_RESNET50}")

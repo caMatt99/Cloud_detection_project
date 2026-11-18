@@ -59,13 +59,13 @@ python src/experiment.py --config configs/resnet50_paper.yaml          # seeds f
 python src/experiment.py --config configs/convnext_legacy.yaml --seeds 0 1 2
 ```
 
-or from `notebooks/02_baseline.ipynb` / `notebooks/03_new_model.ipynb` (set `CONFIG_PATH`), which call `run_seeds_parallel()`: with two GPUs it starts one worker process per GPU and assigns seeds round-robin (seeds 0 1 2 → GPU0: 0, 2 · GPU1: 1), logging to `<results>/<experiment>/logs/gpu<i>.log`; with one GPU it runs the seeds sequentially. The CLI equivalent is `--parallel`. Per-seed results and a `summary.csv` (mean / std / min / max) are written to `paths.results/<experiment.name>/` and zipped to `paths.results/<experiment.name>.zip` (the notebooks' last cell shows a download link on Kaggle), the val-selected weights to `paths.checkpoints/<experiment.name>/seed<k>.pt`.
+or from `notebooks/02_baseline.ipynb` / `notebooks/03_new_model.ipynb` (set `CONFIG_PATH`), which call `run_seeds_parallel()`: with two GPUs it starts one worker process per GPU and assigns seeds round-robin (seeds 0 1 2 → GPU0: 0, 2 · GPU1: 1), logging to `<results>/<experiment>/logs/gpu<i>.log`; with one GPU it runs the seeds sequentially. The CLI equivalent is `--parallel`. Per-seed results, per-image predictions (`predictions_seed<k>.csv`: split, file, label, P(true) with the last-epoch and val-selected weights, for val and test) and a `summary.csv` (mean / std / min / max) are written to `paths.results/<experiment.name>/` and zipped to `paths.results/<experiment.name>.zip` (the notebooks' last cell shows a download link on Kaggle), the val-selected weights to `paths.checkpoints/<experiment.name>/seed<k>.pt`.
 
 ### 3. Evaluation protocol
 
 - the checkpoint is selected on validation (`selection.monitor`: `val_loss` or `val_acc`), never on test;
 - test is reported both with the val-selected weights and with the last-epoch weights (`test_best_*` / `test_last_*` in the per-seed JSON);
-- precision / recall / F1 are binary with positive class `true`, as in the paper (weighted averages are logged too);
+- precision / recall / F1 are binary with positive class `true`, as in the paper (weighted averages are logged too); ROC-AUC is reported as a threshold-free metric;
 - results are compared as mean ± std over seeds. The test set has 470 images, so one image is 0.21 pp.
 
 ---
