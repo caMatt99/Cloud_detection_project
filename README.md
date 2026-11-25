@@ -1,13 +1,15 @@
 # Cloud Detection – Ceilometer Backscatter Classification
 
 ## Overview
-This project benchmarks CNN and transformer architectures for binary cloud detection (cloudy / clear) from ceilometer lidar backscatter profile images. It reproduces the baseline from Chisari et al., *"Cloud Detection Challenge – Methods and Results"* (IEEE Access, 2025) and *"On the Cloud Detection from Backscattered Images..."* (ICIP, 2024), then evaluates newer architectures (ConvNeXt-Base, Swin Transformer) against it. The data source is the public Zenodo dataset [record 10616434](https://zenodo.org/records/10616434): 1000×150 backscatter images split into `train`/`val`/`test`, each containing `true` (cloudy) and `false` (clear) subfolders. Every experiment is a YAML config run over several seeds by `src/experiment.py`, from the notebooks or the command line. Per-seed results and aggregates are written to `paths.results/<experiment.name>/`.
+This project replicates the ResNet50 baseline of Chisari et al. for binary cloud detection (cloudy / clear) from ceilometer backscatter images, *"Cloud Detection Challenge – Methods and Results"* (IEEE Access, 2025) and *"On the Cloud Detection from Backscattered Images..."* (ICIP, 2024), and compares it with ConvNeXt-Base under a reproducible protocol: every model is trained over three seeds, the checkpoint is selected on validation, and results are reported as mean ± std on the official test set. The data is the public Zenodo dataset [record 10616434](https://zenodo.org/records/10616434): 1000×150 backscatter images, one per hour of measurement, split into `train`/`val`/`test`, each with `true` (cloudy) and `false` (clear) subfolders.
+
+**Main result:** ConvNeXt-Base reaches **89.15 ± 0.56%** test accuracy, +2.6 pp over the ResNet50 replica (86.52 ± 0.33%) and in line with the paper's best single run (89.57%). The error analysis shows that the remaining errors are almost all clear-sky images predicted as cloudy and concentrate on a few days of the test period (see [Analysis](#analysis)).
 
 ---
 
 ## System Requirements
 
-- Python 3.9 or later (required by `torch>=2.0`)
+- Python 3.11 or later (required by the pinned `numpy` / `pandas`)
 - Training/inference: `torch`, `torchvision`, `timm`
 - Metrics, statistics and plotting: `scikit-learn`, `scipy`, `matplotlib`, `numpy`, `pandas`, `pillow`
 - Config and notebooks: `pyyaml`, `jupyterlab`
@@ -82,12 +84,49 @@ or from `notebooks/02_baseline.ipynb` / `notebooks/03_new_model.ipynb` (set `CON
 
 ## Results
 
-| Model | Protocol | Test accuracy |
-|---|---|---|
-| ResNet50 (paper, Chisari et al.) | single best run | 89.57% |
-| ConvNeXt-Base, legacy recipe | single unseeded run, last epoch | 92.77% |
+Test set: 470 images (315 cloudy, 155 clear); one image is 0.21 pp. Mean ± std over seeds 0, 1, 2, weights selected on validation; precision / recall / F1 with positive class `true`.
 
-The 92.77% run was neither seeded nor selected on validation, so it is being re-measured with `convnext_legacy.yaml` under the protocol above before being compared with the paper.
+| Model | Config | Accuracy (%) | Precision | Recall | F1 | ROC-AUC | Best epoch |
+|---|---|---|---|---|---|---|---|
+| ResNet50, paper (Chisari et al.) | single best run | 89.57 | 0.90 | 0.96 | 0.93 | — | — |
+| ResNet50, paper replica | `resnet50_paper.yaml` | 86.52 ± 0.33 | 0.846 ± 0.002 | 0.977 ± 0.004 | 0.907 ± 0.002 | — | 5–6 |
+| ResNet50, no early stopping | `resnet50_paper_full.yaml` | 85.74 ± 0.21 | 0.835 ± 0.001 | 0.982 ± 0.002 | 0.902 ± 0.002 | — | 17–27 |
+| **ConvNeXt-Base, legacy recipe** | `convnext_legacy.yaml` | **89.15 ± 0.56** | 0.882 ± 0.023 | 0.968 ± 0.028 | 0.923 ± 0.003 | 0.927 ± 0.004 | 57–60 |
+
+ROC-AUC was added to the pipeline after the ResNet50 runs.
+
+- **ConvNeXt vs ResNet50.** +2.6 pp on the same protocol; the worst ConvNeXt seed (88.51%) is above the best ResNet50 seed (86.81%).
+- **vs the paper.** ConvNeXt matches the published ResNet50 figure but does not beat it; the paper reports a single run without variance. The ResNet50 replica is 3 pp below it.
+- **The earlier 92.77%** (single unseeded ConvNeXt run, last epoch) does not reproduce: the same recipe over three seeds gives 89.15 ± 0.56%.
+- **Training longer does not help ResNet50.** Without the paper's early stopping, validation accuracy rises by ~1 pp while test accuracy drops by ~0.8 pp: after epoch ~20 the model overfits (train accuracy 99.6%, validation loss rising).
+- **ConvNeXt was still improving at epoch 60** (best epoch 57–60, train accuracy ~77% under gradual unfreezing and heavy augmentation), so the legacy recipe is not converged.
+
+---
+
+## Analysis
+
+**Error profile.** All models trade precision for recall: almost every error is a clear-sky image predicted as cloudy. With ConvNeXt, specificity on the 155 clear test images is only 0.74 on average, against a recall of 0.97. Of the 33 test images misclassified by all three seeds, 30 are false positives, many predicted with P(cloudy) > 0.95.
+
+**Errors cluster by day.** File names encode date and hour (`YYYYMMDD-HH.png`). The persistent false positives concentrate on a few days, e.g. 23 Feb 2023: 15 images, all labelled clear, 6 of them misclassified by every seed. Labels are not derived from the ceilometer itself but from the WRF weather model (1×1 km grid, hourly cloud cover), so confident, day-level clusters of errors are consistent with label noise or with atmospheric conditions (e.g. aerosol layers) that look like cloud in the backscatter signal. They have not been inspected individually.
+
+**Class imbalance is not the cause of the val/test gap.** The cloudy/clear ratio is ~2:1 and identical across train, val and test (2.02 / 2.04 / 2.03, χ² p = 0.998).
+
+**The split is temporal, the validation set is not.** The validation set is a random 30% of the training images (its images span 1 Jan – 25 Feb 2023), while the test set covers a later period (15 Feb – 14 Mar 2023); validation and test share only 7 days. Consecutive hours of the same day are nearly identical images, so a random validation split contains near-duplicates of training images. Consequences observed in the runs:
+- validation accuracy overestimates test accuracy (ResNet50 without early stopping: 90.3% val vs 85.7% test);
+- selecting epochs on validation improves validation but not test;
+- a decision threshold tuned on validation lowers test accuracy for every ConvNeXt seed (86.2–87.2% instead of 88.5–89.6%).
+
+The random validation split is kept because it is the paper's protocol, so the replica stays comparable.
+
+---
+
+## Limitations and future work
+
+- **Temporal validation split.** Hold out the last days of the training period as validation, whole days only, so that model selection reflects the test distribution. This changes the protocol, so baselines must be re-run on it.
+- **Clean ConvNeXt recipe.** Full fine-tuning, ImageNet normalization and early stopping, developed on the temporal split; the legacy recipe was not converged at 60 epochs.
+- **Label audit.** Inspect the persistent false positives (`predictions_seed<k>.csv`) against the WRF labels to quantify label noise in the test set.
+- **Input resolution.** Images are resized from 1000×150 to 224×224, which compresses the height axis 4.5× and can thin out weak cloud layers.
+- Three seeds give a usable mean but a coarse estimate of the std.
 
 ---
 
