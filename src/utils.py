@@ -150,15 +150,3 @@ def load_config(path: str, env: Optional[str] = None) -> Dict[str, Any]:
     cfg["_env"] = env
     cfg["_config_path"] = os.path.abspath(path)
     return cfg
-
-
-def flatten_dict(d: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
-    """{'a': {'b': 1}} -> {'a.b': 1}. Used to log the whole config to W&B."""
-    out: Dict[str, Any] = {}
-    for k, v in d.items():
-        key = f"{prefix}{k}"
-        if isinstance(v, dict):
-            out.update(flatten_dict(v, f"{key}."))
-        else:
-            out[key] = v
-    return out

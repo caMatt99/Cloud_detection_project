@@ -24,7 +24,7 @@ PAPER_RESNET50 = {"accuracy": 89.57, "f1": 0.93, "precision": 0.90, "recall": 0.
 
 
 def compute_metrics(labels: np.ndarray, preds: np.ndarray) -> Dict[str, float]:
-    """accuracy in percent (comparable with earlier W&B runs), the rest in [0, 1]."""
+    """accuracy in percent (comparable with the paper and earlier runs), the rest in [0, 1]."""
     labels, preds = np.asarray(labels), np.asarray(preds)
     return {
         "accuracy":           accuracy_score(labels, preds) * 100,

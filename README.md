@@ -95,7 +95,7 @@ The 92.77% run was neither seeded nor selected on validation, so it is being re-
 
 | Module | Contents |
 |---|---|
-| `src/utils.py` | `seed_everything()`, `seed_worker()`, environment detection (`kaggle` / `local`), `print_env()` (GPU / torch-build check), `find_dataset_root()`, `load_config()` (resolves per-environment entries and `dataset.path: auto`), `flatten_dict()`. |
+| `src/utils.py` | `seed_everything()`, `seed_worker()`, environment detection (`kaggle` / `local`), `print_env()` (GPU / torch-build check), `find_dataset_root()`, `load_config()` (resolves per-environment entries and `dataset.path: auto`). |
 | `src/dataset.py` | Split utilities (`check_split`, `split_fingerprint`, `make_val_split`), transforms (`paper` / `randaugment`, `imagenet` / `local` normalization), seeded `get_dataloaders()`. |
 | `src/models.py` | `get_model()` with pinned timm tags and torchvision `resnet50_tv`; `drop_rate` / `drop_path_rate`; legacy helpers `apply_legacy_dropout()` and `get_unfrozen_params()`. |
 | `src/engine.py` | `train_one_epoch()` / `evaluate()` with optional AMP and gradient clipping, `build_optimizer()`, `BestCheckpoint`, `EarlyStopping` (`none` / `paper` / `standard`). |
